@@ -89,7 +89,7 @@ Most epistemological errors aren't lies. They're conflations — one word quietl
 
 **SOURCE CHARACTER** — Do you trust who packed the box?
 
-**TRUTH** — Does the content correspond to anything?
+**TRUTH** — Does the content hold up? (Correspondence, coherence, pragmatic consequence — pick your theory. The Deconflator doesn't. It just flags when scope or fidelity are being passed off as a substitute for whichever one you meant.)
 
 The post office delivers. It does not certify. A billion-person consensus is a fact about the delivery network. It says nothing about what was in the package.
 
