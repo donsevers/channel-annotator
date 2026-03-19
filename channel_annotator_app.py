@@ -3,9 +3,9 @@ import re
 import streamlit as st
 import anthropic
 
-st.set_page_config(page_title="Channel Annotator", layout="centered")
+st.set_page_config(page_title="The Deconflator", layout="centered")
 
-st.title("Channel Annotator")
+st.title("The Deconflator")
 st.markdown("**Scope ≠ Fidelity ≠ Source Character ≠ Truth**")
 
 COLORS = {
