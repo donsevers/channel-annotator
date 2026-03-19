@@ -16,47 +16,84 @@ COLORS = {
     "CONFLATION": "#e2d9f3",
 }
 
-SYSTEM_PROMPT = (
-    "You are an epistemological annotation assistant trained in channel-theoretic "
-    "epistemology. Your task is to identify claims in text that involve scope, fidelity, "
-    "source character, truth, or conflations of these. Be sensitive to subtle cases: "
-    "high confidence language often smuggles in fidelity-as-truth conflations. "
-    "Institutional or consensus language often smuggles in scope-as-truth conflations. "
-    "Return ONLY valid JSON, no preamble, no markdown fences."
-)
+SYSTEM_PROMPT = """\
+You are an epistemological annotation assistant trained in channel-theoretic epistemology.
+
+FOUR INDEPENDENT DIMENSIONS OF EPISTEMIC CLAIMS:
+
+Think of knowledge transmission like a post office:
+
+SCOPE — How many receivers share access to the channel. How many mailboxes the \
+post office delivers to. "Everyone agrees" is a scope claim: it says the channel \
+is wide, not that the message is true.
+
+FIDELITY — How faithfully the channel transmits. Whether the post office delivers \
+letters without smudging them. "I saw it with my own eyes" is a fidelity claim: it \
+says the channel is clean, not that the content is true.
+
+SOURCE_CHARACTER — Signals about the trustworthiness of whoever put the message \
+into the channel. "According to leading scientists" is a source-character claim: it \
+says the sender is credible, not that the message is true. Also covers adversarial \
+or unknown sources: a high-fidelity channel to a mendacious source delivers perfectly \
+transmitted error. "The algorithm determined" and "simulations predict" belong here.
+
+TRUTH — Whether the message corresponds to reality. "It's a fact" is a truth claim.
+
+THE KEY INSIGHT — These four dimensions are independent. The Genie example: imagine \
+a genie tells only you a true fact. The scope is minimal (only you), the fidelity \
+is perfect (genie-to-you, no distortion), the source character is unknown (do you \
+trust genies?), and the truth may be genuine — but none of these dimensions implies \
+the others. Knowing something is true doesn't make it public; knowing it's public \
+doesn't make it true.
+
+CONFLATION — The most important category. A CONFLATION fires when a single phrase \
+does the work of two or more dimensions simultaneously, treating them as equivalent \
+when they are not. "Objectively true" is the canonical example: it collapses scope \
+(objective = accessible to all) and truth (true = corresponds to reality) into one \
+phrase, as though wide scope guarantees correspondence. Be sensitive to subtle cases: \
+high-confidence language often smuggles in fidelity-as-truth conflations. \
+Institutional or consensus language often smuggles in scope-as-truth conflations.
+
+EXAMPLES (use this exact JSON format):
+
+{"annotations": [
+  {"phrase": "everyone agrees", "type": "SCOPE", "explanation": "Wide-scope claim: asserts convergence across receivers without addressing fidelity or truth.", "dimensions_conflated": []},
+  {"phrase": "I saw it with my own eyes", "type": "FIDELITY", "explanation": "High-fidelity claim: asserts clean transmission without addressing truth.", "dimensions_conflated": []},
+  {"phrase": "studies show", "type": "SOURCE_CHARACTER", "explanation": "Source authority invoked without fidelity or truth warrant.", "dimensions_conflated": []},
+  {"phrase": "the fact of the matter is", "type": "TRUTH", "explanation": "Direct truth claim without scope or fidelity warrant given.", "dimensions_conflated": []},
+  {"phrase": "the science is settled", "type": "CONFLATION", "explanation": "Presents consensus (scope) as equivalent to correspondence (truth). These are independent dimensions.", "dimensions_conflated": ["SCOPE", "TRUTH"]},
+  {"phrase": "I know what I saw, and that proves it", "type": "CONFLATION", "explanation": "Asserts that clean transmission (fidelity) constitutes proof of correspondence (truth). These are independent dimensions.", "dimensions_conflated": ["FIDELITY", "TRUTH"]}
+]}
+
+Return ONLY valid JSON, no preamble, no markdown fences."""
 
 USER_PROMPT_TEMPLATE = (
     'Analyze this text and return a JSON object with this structure:\n'
     '{{"annotations": [{{"phrase": "exact phrase from text", "type": '
     '"SCOPE|FIDELITY|SOURCE_CHARACTER|TRUTH|CONFLATION", "explanation": "one sentence", '
-    '"dimensions_conflated": ["only for CONFLATION type, list the dimensions"]}}]}}\n\n'
+    '"dimensions_conflated": ["only for CONFLATION type, list the dimensions"], '
+    '"flex_speak": "If a standard fallacy name applies (ad populum, ad verecundiam, etc.), give it. '
+    'If the conflation happens before the argument is even made — at the vocabulary level — say '
+    'pre-inferential conflation."}}]}}\n\n'
     'Text to analyze:\n{user_text}'
 )
 
 ABOUT_TEXT = """
-**Channel-theoretic epistemology** separates four dimensions that everyday language routinely blurs together:
+The Deconflator separates what you know from how you know it.
 
-**Scope** — How many people share access to the information. Think of it as *how many mailboxes
-the post office delivers to*. "Everyone agrees" is a scope claim — it says the channel is wide,
-not that the message is true.
+Most epistemological errors aren't lies. They're conflations — one word quietly doing the work of four distinct questions:
 
-**Fidelity** — How faithfully the channel transmits. Like whether the post office delivers letters
-*without smudging them*. "I saw it with my own eyes" is a fidelity claim — it says the channel
-is clean, not that the content is true.
+**SCOPE** — How many receivers share the channel?
 
-**Source Character** — Signals about the trustworthiness of whoever put the message into the channel.
-"According to leading scientists" is a source-character claim — it says the sender is credible,
-not that the message is true.
+**FIDELITY** — How cleanly does the channel transmit?
 
-**Truth** — Whether the message corresponds to reality. "It's a fact" is a truth claim.
+**SOURCE CHARACTER** — Do you trust who packed the box?
 
-**The Genie example:** Imagine a genie tells only you a true fact. The *scope* is minimal (only you),
-the *fidelity* is perfect (genie-to-you, no distortion), the *source character* is unknown (do you
-trust genies?), and the *truth* may be genuine — but none of these dimensions *implies* the others.
-Knowing something is true doesn't make it public; knowing it's public doesn't make it true.
+**TRUTH** — Does the content correspond to anything?
 
-**Conflation** is the most important category: it flags moments where a speaker collapses two or more
-of these dimensions into one, treating them as equivalent when they are not.
+The post office delivers. It does not certify. A billion-person consensus is a fact about the delivery network. It says nothing about what was in the package.
+
+The Genie knows this. The Salem jury did not.
 """
 
 
@@ -80,28 +117,62 @@ def call_claude(user_text: str, api_key: str) -> tuple[list[dict], str]:
     return data["annotations"], raw
 
 
+def _normalize(s: str) -> str:
+    """Collapse whitespace and strip punctuation edges for fuzzy matching."""
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _find_phrase(text: str, phrase: str) -> int:
+    """Find phrase in text with exact, case-insensitive, and normalized fallbacks."""
+    idx = text.find(phrase)
+    if idx != -1:
+        return idx
+    idx = text.lower().find(phrase.lower())
+    if idx != -1:
+        return idx
+    # Normalize whitespace in both and search
+    norm_text = _normalize(text)
+    norm_phrase = _normalize(phrase)
+    idx = norm_text.lower().find(norm_phrase.lower())
+    if idx != -1:
+        # Map back to original text position approximately
+        # Count how many chars in original text correspond to idx chars in normalized
+        orig_idx = 0
+        norm_idx = 0
+        for orig_idx, ch in enumerate(text):
+            if norm_idx >= idx:
+                break
+            if ch.isspace():
+                if orig_idx == 0 or not text[orig_idx - 1].isspace():
+                    norm_idx += 1
+            else:
+                norm_idx += 1
+        return orig_idx
+    return -1
+
+
 def build_annotated_html(text: str, annotations: list[dict]) -> str:
-    # Build list of (start, end, annotation) sorted by position, first match wins
     spans = []
     for ann in annotations:
         phrase = ann["phrase"]
-        idx = text.find(phrase)
-        if idx == -1:
-            # Try case-insensitive search
-            idx = text.lower().find(phrase.lower())
+        idx = _find_phrase(text, phrase)
         if idx != -1:
             spans.append((idx, idx + len(phrase), ann))
 
-    # Sort by start position
-    spans.sort(key=lambda s: s[0])
+    # Sort: CONFLATION annotations first (priority), then by start position
+    spans.sort(key=lambda s: (0 if s[2]["type"] == "CONFLATION" else 1, s[0]))
 
-    # Remove overlaps: keep the first match
+    # Remove overlaps: CONFLATION wins because it's sorted first
     filtered = []
-    last_end = 0
+    taken = []  # list of (start, end) already claimed
     for start, end, ann in spans:
-        if start >= last_end:
+        overlaps = any(s < end and e > start for s, e in taken)
+        if not overlaps:
             filtered.append((start, end, ann))
-            last_end = end
+            taken.append((start, end))
+
+    # Re-sort by position for rendering
+    filtered.sort(key=lambda s: s[0])
 
     # Build HTML
     parts = []
@@ -116,7 +187,7 @@ def build_annotated_html(text: str, annotations: list[dict]) -> str:
         if dim_type == "CONFLATION":
             parts.append(
                 f'<span style="background-color:{color};padding:2px 4px;border-radius:3px;'
-                f'font-weight:bold">⚠ {phrase_html}</span>'
+                f'font-weight:bold">⚠ FLEX: {phrase_html}</span>'
             )
         else:
             parts.append(
@@ -140,9 +211,21 @@ def escape_html(s: str) -> str:
 
 api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
 
+with st.expander("✈ Tips for Passage (how to avoid delays at customs)"):
+    st.markdown("""
+- Customs flags *bundled cargo*. One word doing the work of four concepts is a declaration violation.
+- "Objectively true" will be detained every time. Declare scope and truth separately.
+- High fidelity is not a passport. The channel ran clean. That's it. That's all it means.
+- Source character goes in a separate bag. "Studies show" is not a truth claim. It is a claim about who packed the box.
+- The Genie is always at the border. Before you trust the transmission, ask: do I know this Genie? Friendly, indifferent, or malicious? That answer changes everything downstream.
+- First-person reports get the same treatment as everything else. "I was there" clears fidelity. It does not clear truth. You may not know what you saw.
+- Pre-inferential conflations are the hardest to catch because they happen before you start arguing. "The science is settled" has already done the damage before the next sentence begins.
+- If your sentence contains "objectively," "clearly," "everyone knows," "the fact is," or "it's obvious" — go to secondary screening.
+""")
+
 user_text = st.text_area(
     "Input text",
-    placeholder="Paste any text to annotate...",
+    placeholder="Paste some bullshit here.",
     height=200,
     label_visibility="collapsed",
 )
@@ -153,6 +236,7 @@ if st.button("Analyze", type="primary"):
     elif not user_text.strip():
         st.warning("Please enter some text to analyze.")
     else:
+        raw_response = ""
         try:
             with st.spinner("Analyzing..."):
                 annotations, raw_response = call_claude(user_text, api_key)
@@ -188,6 +272,7 @@ if st.button("Analyze", type="primary"):
                         row["Dimensions Conflated"] = ", ".join(ann["dimensions_conflated"])
                     else:
                         row["Dimensions Conflated"] = ""
+                    row["Flex-speak"] = ann.get("flex_speak", "")
                     rows.append(row)
                 if rows:
                     st.table(rows)
