@@ -97,6 +97,64 @@ The Genie knows this. The Salem jury did not.
 """
 
 
+def call_claude_concept(concept: str, api_key: str) -> dict:
+    client = anthropic.Anthropic(api_key=api_key)
+
+    # Call 1 — Identification
+    id_message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=512,
+        system=SYSTEM_PROMPT,
+        messages=[
+            {"role": "user", "content": (
+                f"Identify the folk concept or philosophical assumption invoked by: '{concept}'\n"
+                "What domain does it belong to (philosophy of mind, epistemology, ethics, etc.)?\n"
+                "Reply in 2-3 sentences only."
+            )}
+        ],
+    )
+    identification = id_message.content[0].text.strip()
+
+    # Call 2 — Dimensional analysis
+    analysis_message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=1536,
+        system=SYSTEM_PROMPT,
+        messages=[
+            {"role": "user", "content": (
+                f"Apply the four-dimension taxonomy to this concept or claim: '{concept}'\n\n"
+                "For each dimension, answer:\n"
+                "1. Does this concept implicate this dimension? (Yes / No / Partially)\n"
+                "2. What hidden assumption does it carry about this dimension?\n"
+                "3. Is that assumption doing hidden work — i.e., would the concept change or "
+                "break apart if the assumption were made explicit? (Yes / No)\n\n"
+                "Then write a Conflation Summary: one paragraph naming which dimensions this "
+                "concept bundles together that are independently variable, and why separating "
+                "them matters philosophically. If there is no conflation, say so plainly.\n\n"
+                "Return ONLY valid JSON in this exact structure, no preamble, no markdown fences:\n"
+                '{\n'
+                '  "identification": "the 2-3 sentence identification from context",\n'
+                '  "dimensions": {\n'
+                '    "SCOPE": {"implicated": "Yes|No|Partially", "assumption": "...", "hidden_work": "Yes|No"},\n'
+                '    "FIDELITY": {"implicated": "Yes|No|Partially", "assumption": "...", "hidden_work": "Yes|No"},\n'
+                '    "SOURCE_CHARACTER": {"implicated": "Yes|No|Partially", "assumption": "...", "hidden_work": "Yes|No"},\n'
+                '    "TRUTH": {"implicated": "Yes|No|Partially", "assumption": "...", "hidden_work": "Yes|No"}\n'
+                '  },\n'
+                '  "conflation_summary": "..."\n'
+                '}'
+            )}
+        ],
+    )
+    raw = analysis_message.content[0].text.strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+
+    data = json.loads(raw)
+    data["identification"] = identification
+    return data
+
+
 def call_claude(user_text: str, api_key: str) -> tuple[list[dict], str]:
     client = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
@@ -223,67 +281,122 @@ with st.expander("✈ Tips for Passage (how to avoid delays at customs)"):
 - If your sentence contains "objectively," "clearly," "everyone knows," "the fact is," or "it's obvious" — go to secondary screening.
 """)
 
-user_text = st.text_area(
-    "Input text",
-    placeholder="Paste some bullshit here.",
-    height=200,
-    label_visibility="collapsed",
-)
+tab_passage, tab_concept = st.tabs(["Passage", "Concept"])
 
-if st.button("Analyze", type="primary"):
-    if not api_key:
-        st.error("Set ANTHROPIC_API_KEY in .streamlit/secrets.toml")
-    elif not user_text.strip():
-        st.warning("Please enter some text to analyze.")
-    else:
-        raw_response = ""
-        try:
-            with st.spinner("Analyzing..."):
-                annotations, raw_response = call_claude(user_text, api_key)
+# --- Tab 1: Passage (existing UI, unchanged) ---
+with tab_passage:
+    user_text = st.text_area(
+        "Input text",
+        placeholder="Paste some bullshit here.",
+        height=200,
+        label_visibility="collapsed",
+    )
 
-            # Annotated text
-            html = build_annotated_html(user_text, annotations)
-            st.markdown("### Annotated Text")
+    if st.button("Analyze", type="primary"):
+        if not api_key:
+            st.error("Set ANTHROPIC_API_KEY in .streamlit/secrets.toml")
+        elif not user_text.strip():
+            st.warning("Please enter some text to analyze.")
+        else:
+            raw_response = ""
+            try:
+                with st.spinner("Analyzing..."):
+                    annotations, raw_response = call_claude(user_text, api_key)
 
-            # Legend
-            legend_items = []
-            for dim, color in COLORS.items():
-                label = dim.replace("_", " ").title()
-                legend_items.append(
-                    f'<span style="background-color:{color};padding:2px 6px;border-radius:3px;'
-                    f'margin-right:8px;font-size:0.85em">{label}</span>'
+                # Annotated text
+                html = build_annotated_html(user_text, annotations)
+                st.markdown("### Annotated Text")
+
+                # Legend
+                legend_items = []
+                for dim, color in COLORS.items():
+                    label = dim.replace("_", " ").title()
+                    legend_items.append(
+                        f'<span style="background-color:{color};padding:2px 6px;border-radius:3px;'
+                        f'margin-right:8px;font-size:0.85em">{label}</span>'
+                    )
+                st.markdown(" ".join(legend_items), unsafe_allow_html=True)
+                st.markdown(
+                    f'<div style="line-height:1.8;font-size:1.05em;margin-top:12px">{html}</div>',
+                    unsafe_allow_html=True,
                 )
-            st.markdown(" ".join(legend_items), unsafe_allow_html=True)
-            st.markdown(
-                f'<div style="line-height:1.8;font-size:1.05em;margin-top:12px">{html}</div>',
-                unsafe_allow_html=True,
-            )
 
-            # Annotations detail
-            with st.expander("Annotations detail"):
-                rows = []
-                for ann in annotations:
-                    row = {
-                        "Phrase": ann["phrase"],
-                        "Type": ann["type"],
-                        "Explanation": ann["explanation"],
-                    }
-                    if ann["type"] == "CONFLATION" and ann.get("dimensions_conflated"):
-                        row["Dimensions Conflated"] = ", ".join(ann["dimensions_conflated"])
+                # Annotations detail
+                with st.expander("Annotations detail"):
+                    rows = []
+                    for ann in annotations:
+                        row = {
+                            "Phrase": ann["phrase"],
+                            "Type": ann["type"],
+                            "Explanation": ann["explanation"],
+                        }
+                        if ann["type"] == "CONFLATION" and ann.get("dimensions_conflated"):
+                            row["Dimensions Conflated"] = ", ".join(ann["dimensions_conflated"])
+                        else:
+                            row["Dimensions Conflated"] = ""
+                        row["Flex-speak"] = ann.get("flex_speak", "")
+                        rows.append(row)
+                    if rows:
+                        st.table(rows)
                     else:
-                        row["Dimensions Conflated"] = ""
-                    row["Flex-speak"] = ann.get("flex_speak", "")
-                    rows.append(row)
-                if rows:
-                    st.table(rows)
-                else:
-                    st.info("No annotations found.")
+                        st.info("No annotations found.")
 
-        except json.JSONDecodeError as e:
-            st.error(f"Failed to parse the API response: {e}")
-            st.code(raw_response, language="text")
-        except anthropic.APIError as e:
-            st.error(f"API error: {e}")
+            except json.JSONDecodeError as e:
+                st.error(f"Failed to parse the API response: {e}")
+                st.code(raw_response, language="text")
+            except anthropic.APIError as e:
+                st.error(f"API error: {e}")
+
+# --- Tab 2: Concept (dimensional analysis mode) ---
+with tab_concept:
+    concept_input = st.text_input(
+        "Concept or claim",
+        placeholder="Enter a concept or claim (e.g. 'mental privacy', 'fMRI reads your mind', 'objectivity')",
+        label_visibility="collapsed",
+    )
+
+    if st.button("Decompose", type="primary", key="decompose_btn"):
+        if not api_key:
+            st.error("Set ANTHROPIC_API_KEY in .streamlit/secrets.toml")
+        elif not concept_input.strip():
+            st.warning("Please enter a concept or claim to decompose.")
+        else:
+            try:
+                with st.spinner("Identifying concept..."):
+                    with st.spinner("Running dimensional analysis..."):
+                        result = call_claude_concept(concept_input, api_key)
+
+                # Identification
+                st.markdown(f"**Identification:** {escape_html(result['identification'])}")
+
+                # Dimension cards
+                dim_labels = {
+                    "SCOPE": "SCOPE",
+                    "FIDELITY": "FIDELITY",
+                    "SOURCE_CHARACTER": "SOURCE CHARACTER",
+                    "TRUTH": "TRUTH",
+                }
+                for dim_key, dim_label in dim_labels.items():
+                    dim = result["dimensions"][dim_key]
+                    color = COLORS.get(dim_key, "#eee")
+                    card_html = (
+                        f'<div style="background-color:{color};padding:12px 16px;border-radius:6px;margin-bottom:10px">'
+                        f'<strong>{dim_label}</strong><br>'
+                        f'Implicated: {escape_html(dim["implicated"])}<br>'
+                        f'Hidden assumption: {escape_html(dim["assumption"])}<br>'
+                        f'Doing hidden work: {escape_html(dim["hidden_work"])}'
+                        f'</div>'
+                    )
+                    st.markdown(card_html, unsafe_allow_html=True)
+
+                # Conflation Summary
+                st.markdown("### Conflation Summary")
+                st.markdown(result["conflation_summary"])
+
+            except json.JSONDecodeError as e:
+                st.error(f"Failed to parse the API response: {e}")
+            except anthropic.APIError as e:
+                st.error(f"API error: {e}")
 
 # About
 with st.expander("About this tool"):
